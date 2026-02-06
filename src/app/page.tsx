@@ -20,7 +20,10 @@ import {
   Search,
   Zap,
   HardDrive,
-  ChevronRight
+  ChevronRight,
+  ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight
 } from "lucide-react";
 import {
   CartesianGrid,
@@ -31,6 +34,15 @@ import {
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
 import { formatDistanceToNow } from 'date-fns';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 interface PCStats {
   hostname: string;
@@ -41,6 +53,13 @@ interface PCStats {
   ram: number;
   uptime: string;
   lastUpdate: string;
+}
+
+interface PaginationData {
+  totalHosts: number;
+  totalPages: number;
+  currentPage: number;
+  limit: number;
 }
 
 export default function Dashboard() {
@@ -54,12 +73,17 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [isMounted, setIsMounted] = useState(false);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState<PaginationData | null>(null);
+  const limit = 10;
+
   useEffect(() => {
     setIsMounted(true);
     initialLoad();
     const interval = setInterval(refreshData, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentPage]); // Refetch when page changes
 
   useEffect(() => {
     if (selectedPC) {
@@ -81,11 +105,14 @@ export default function Dashboard() {
 
   const fetchData = async () => {
     try {
-      const res = await fetch('/api/stats');
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const res = await fetch(`/api/stats?page=${currentPage}&limit=${limit}`);
+      const result = await res.json();
+      if (result.error) throw new Error(result.error);
 
+      const data = result.data;
       setPcs(data);
+      setPagination(result.pagination);
+
       if (data.length > 0) {
         if (!selectedPC) {
           setSelectedPC(data[0]);
@@ -169,7 +196,7 @@ export default function Dashboard() {
                 </h1>
               </motion.div>
               <p className="text-zinc-500 font-light flex items-center gap-2 text-sm">
-                <Monitor className="w-4 h-4" /> <span className="hidden xs:inline">Global telemetry for</span> {pcs.length} nodes.
+                <Monitor className="w-4 h-4" /> <span className="hidden xs:inline">Global telemetry for</span> {pagination?.totalHosts || 0} nodes.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -210,10 +237,10 @@ export default function Dashboard() {
         {/* Global Stats Grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           {[
-            { title: "Status", value: `${pcs.filter(p => p.status === 'online').length}/${pcs.length}`, desc: "Healthy", icon: <Monitor className="text-emerald-500 w-4 h-4" />, color: "emerald" },
+            { title: "Status", value: `${pcs.filter(p => p.status === 'online').length}/${pcs.length}`, desc: "Current Page", icon: <Monitor className="text-emerald-500 w-4 h-4" />, color: "emerald" },
             { title: "CPU", value: `${avgCpu}%`, desc: "Avg Load", icon: <Cpu className="text-blue-500 w-4 h-4" />, color: "blue" },
             { title: "RAM", value: `${avgRam}%`, desc: "Avg Usage", icon: <Activity className="text-purple-500 w-4 h-4" />, color: "purple" },
-            { title: "Down", value: pcs.filter(p => p.status === 'offline').length, desc: "Critical", icon: <Zap className="text-orange-500 w-4 h-4" />, color: "orange" },
+            { title: "Total Nodes", value: pagination?.totalHosts || 0, desc: "Global Inventory", icon: <Server className="text-orange-500 w-4 h-4" />, color: "orange" },
           ].map((stat, i) => (
             <motion.div
               key={stat.title}
@@ -246,7 +273,7 @@ export default function Dashboard() {
                   <CardTitle className="text-lg md:text-xl font-bold">Telegraf Agents</CardTitle>
                   <CardDescription className="text-zinc-500 font-light text-xs md:text-sm">Inventory of registered endpoints</CardDescription>
                 </div>
-                <Badge variant="outline" className="text-zinc-500 border-zinc-800 text-[10px]">{filteredPcs.length} total</Badge>
+                <Badge variant="outline" className="text-zinc-500 border-zinc-800 text-[10px]">{pagination?.totalHosts || 0} total</Badge>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -255,7 +282,7 @@ export default function Dashboard() {
                   {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-12 w-full bg-zinc-800/50 rounded-xl" />)}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto min-h-[500px] flex flex-col justify-between">
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent border-white/5">
@@ -313,6 +340,67 @@ export default function Dashboard() {
                       </AnimatePresence>
                     </TableBody>
                   </Table>
+
+                  {/* Pagination Footer */}
+                  {pagination && pagination.totalPages > 1 && (
+                    <div className="p-4 border-t border-white/5 bg-white/[0.01]">
+                      <Pagination>
+                        <PaginationContent>
+                          <PaginationItem>
+                            <PaginationPrevious
+                              href="#"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                if (currentPage > 1) setCurrentPage(currentPage - 1);
+                              }}
+                              className={currentPage === 1 ? "opacity-50 pointer-events-none" : ""}
+                            />
+                          </PaginationItem>
+
+                          {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                            // Simple logic for showing pages around current
+                            let pageNum = i + 1;
+                            if (pagination.totalPages > 5 && currentPage > 3) {
+                              pageNum = currentPage - 3 + i + 1;
+                              if (pageNum > pagination.totalPages) pageNum = pagination.totalPages - (4 - i);
+                            }
+
+                            return (
+                              <PaginationItem key={pageNum}>
+                                <PaginationLink
+                                  href="#"
+                                  isActive={currentPage === pageNum}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    setCurrentPage(pageNum);
+                                  }}
+                                >
+                                  {pageNum}
+                                </PaginationLink>
+                              </PaginationItem>
+                            );
+                          })}
+
+                          {pagination.totalPages > 5 && currentPage < pagination.totalPages - 2 && (
+                            <PaginationItem>
+                              <PaginationEllipsis />
+                            </PaginationItem>
+                          )}
+
+                          <PaginationItem>
+                            <PaginationNext
+                              href="#"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                if (currentPage < pagination.totalPages) setCurrentPage(currentPage + 1);
+                              }}
+                              className={currentPage === pagination.totalPages ? "opacity-50 pointer-events-none" : ""}
+                            />
+                          </PaginationItem>
+                        </PaginationContent>
+                      </Pagination>
+                    </div>
+                  )}
                 </div>
               )}
               {pcs.length === 0 && !loading && (
