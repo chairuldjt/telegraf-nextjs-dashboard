@@ -18,7 +18,7 @@ export async function GET() {
     const cpuRes = await query(`
       SELECT DISTINCT ON (host) 
         host, 
-        usage_active, 
+        (100 - usage_idle) as cpu_active, 
         time
       FROM cpu
       WHERE cpu = 'cpu-total'
@@ -66,7 +66,7 @@ export async function GET() {
 
     cpuRes.rows.forEach(r => {
       if (hostsMap[r.host]) {
-        hostsMap[r.host].cpu = Math.round(r.usage_active);
+        hostsMap[r.host].cpu = Math.round(r.cpu_active);
       }
     });
 

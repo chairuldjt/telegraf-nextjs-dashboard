@@ -12,7 +12,7 @@ export async function GET(request: Request) {
         let stats = [];
         if (type === 'cpu') {
             const res = await query(`
-        SELECT time, usage_active as usage
+        SELECT time, (100 - usage_idle) as usage
         FROM cpu
         WHERE host = $1 AND cpu = 'cpu-total'
         ORDER BY time DESC
