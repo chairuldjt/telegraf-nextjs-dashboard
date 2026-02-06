@@ -186,7 +186,7 @@ export default function Dashboard() {
         }
       />
 
-      <main className="container mx-auto p-4 md:p-6 lg:p-8 space-y-6 md:space-y-8 -mt-56 md:-mt-64 relative z-10 pb-24">
+      <main className="container mx-auto p-4 md:p-6 lg:p-8 space-y-6 md:space-y-8 pt-24 md:pt-32 relative z-10 pb-24">
         <header className="flex flex-col gap-6">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
             <div className="space-y-1">

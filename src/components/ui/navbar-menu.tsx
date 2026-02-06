@@ -3,10 +3,17 @@
 import { AnimatePresence, motion } from "motion/react";
 import Image from "next/image";
 import * as React from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Menu, X, ExternalLink } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { RaisedButton } from "@/components/ui/raised-button";
+import {
+	Sheet,
+	SheetContent,
+	SheetHeader,
+	SheetTitle,
+	SheetTrigger,
+} from "@/components/ui/sheet";
 
 export interface NavbarMenuLink {
 	label: string;
@@ -22,12 +29,6 @@ export interface NavbarMenuSection {
 	id: string;
 	links: NavbarMenuLink[];
 	gridLayout?: string;
-}
-
-export interface NavbarMenuProps {
-	activeMenu: string;
-	sections: NavbarMenuSection[];
-	onClose?: () => void;
 }
 
 export interface NavbarWithMenuProps {
@@ -109,15 +110,9 @@ const ListItem = React.forwardRef<
 							</span>
 						)}
 						<div className="flex h-full flex-col justify-start gap-1 leading-none font-normal text-zinc-100">
-							{title}
-
+							<span className="text-sm font-semibold">{title}</span>
 							{children && (
-								<p
-									className={cn(
-										"line-clamp-2 text-sm leading-tight font-light text-zinc-500",
-										backgroundImage && "relative z-[2]",
-									)}
-								>
+								<p className="line-clamp-2 text-xs leading-tight font-light text-zinc-500">
 									{children}
 								</p>
 							)}
@@ -131,160 +126,159 @@ const ListItem = React.forwardRef<
 
 ListItem.displayName = "ListItem";
 
-export function NavbarMenu({ activeMenu, sections }: NavbarMenuProps) {
-	const activeSection = sections.find((section) => section.id === activeMenu);
-
-	if (!activeSection) return null;
-
-	const gridLayout =
-		activeSection.gridLayout || "grid w-full grid-cols-2 gap-4";
-
-	return (
-		<motion.div
-			initial={{ scaleY: 0.95, opacity: 0 }}
-			animate={{ scaleY: 1, opacity: 1 }}
-			exit={{ scaleY: 0.95, opacity: 0 }}
-			transition={{
-				ease: [0.19, 1, 0.15, 1.01],
-			}}
-			className={cn(
-				"absolute top-full left-0 z-40 w-full origin-top overflow-hidden rounded-b-2xl border-1 border-y-0 border-white/5 bg-gradient-to-b from-zinc-950 to-zinc-900/30 backdrop-blur-2xl outline-none",
-			)}
-		>
-			<div className="p-6">
-				<ul className={gridLayout}>
-					{activeSection.links.map((link) => (
-						<ListItem
-							key={link.href}
-							href={link.href}
-							title={link.label}
-							external={link.external}
-							icon={link.icon}
-							backgroundImage={link.backgroundImage}
-							rowSpan={link.rowSpan}
-						>
-							{link.description}
-						</ListItem>
-					))}
-				</ul>
-			</div>
-		</motion.div>
-	);
-}
-
 export function NavbarWithMenu({
 	sections,
 	navItems,
 	logo,
 	cta,
 }: NavbarWithMenuProps) {
-	const [activeDropdown, setActiveDropdown] = React.useState<string | null>(
-		null,
-	);
-	const [hoveredItem, setHoveredItem] = React.useState<string | null>(null);
+	const [activeDropdown, setActiveDropdown] = React.useState<string | null>(null);
+	const [isScrolled, setIsScrolled] = React.useState(false);
 
-	const defaultNavItems = [
-		{ type: "dropdown", label: "Product", menu: "product" },
-		{ type: "dropdown", label: "Resources", menu: "resources" },
-		{ type: "dropdown", label: "Socials", menu: "socials" },
-	] as const;
+	React.useEffect(() => {
+		const handleScroll = () => {
+			setIsScrolled(window.scrollY > 20);
+		};
+		window.addEventListener("scroll", handleScroll);
+		return () => window.removeEventListener("scroll", handleScroll);
+	}, []);
 
-	const items = navItems || defaultNavItems;
-
-	const handleNavbarMouseLeave = () => {
-		setActiveDropdown(null);
-		setHoveredItem(null);
-	};
-
-	const handleMouseEnter = (menu: string) => {
-		setActiveDropdown(menu);
-		setHoveredItem(menu);
-	};
+	const items = navItems || [
+		{ type: "dropdown", label: "Monitoring", menu: "monitoring" },
+	];
 
 	return (
-		<div className="min-h-[350px] w-full bg-zinc-950 p-4 flex items-start justify-center transition">
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: Hover container for menu, not interactive content */}
-			<div
-				className="relative mx-auto w-screen max-w-4xl"
-				onMouseLeave={handleNavbarMouseLeave}
-			>
-				<div
-					className={cn(
-						"navbar_content flex h-14 w-full items-center justify-between border border-white/5 px-3 backdrop-blur-md transition-all",
-						activeDropdown
-							? "rounded-t-2xl border-b-0 bg-zinc-950"
-							: "rounded-2xl bg-zinc-900/30",
-					)}
-				>
-					<div className="flex items-center gap-2 px-2">
-						{logo || (
-							<Image
-								src="/media/text_w_logo_white.webp"
-								alt="Logo"
-								width={100}
-								height={30}
-								className="object-contain"
-							/>
-						)}
-					</div>
-
-					<div className="flex items-center gap-1 rounded-lg px-1 py-1">
-						{items.map((item) =>
-							item.type === "link" ? (
-								<button
-									type="button"
-									key={item.href}
-									className={cn(
-										"relative flex h-9 cursor-pointer items-center rounded-xl px-4 py-2 text-sm transition-colors hover:bg-zinc-800/40",
-										hoveredItem === item.label.toLowerCase()
-											? "text-zinc-100"
-											: "text-zinc-400 hover:text-zinc-100",
-									)}
-									onMouseEnter={() => {
-										setHoveredItem(item.label.toLowerCase());
-										setActiveDropdown(null);
-									}}
-								>
-									<span className="relative z-10">{item.label}</span>
-								</button>
-							) : (
-								<button
-									type="button"
-									key={item.menu}
-									className="relative flex h-9 cursor-pointer items-center rounded-xl px-4 py-2 text-sm text-zinc-400 capitalize transition-colors hover:text-zinc-100"
-									onMouseEnter={() => handleMouseEnter(item.menu)}
-								>
-									{hoveredItem === item.menu && (
-										<div className="absolute inset-0 h-full w-full rounded-xl bg-zinc-800 transition-all duration-300 ease-out" />
-									)}
-									<div className="relative z-10 flex items-center gap-2">
-										<span>
-											{item.label.charAt(0).toUpperCase() + item.label.slice(1)}
-										</span>
-										<ChevronDown
-											size={17}
-											className={cn(
-												"transition duration-200",
-												hoveredItem === item.menu && "rotate-180",
-											)}
-										/>
-									</div>
-								</button>
-							),
-						)}
-					</div>
-
-					<div className="flex items-center gap-2">
-						{cta || <RaisedButton color="#00bbff">Get Started</RaisedButton>}
-					</div>
+		<header
+			className={cn(
+				"fixed top-0 left-0 right-0 z-[100] transition-all duration-300 px-4 py-4",
+				isScrolled ? "bg-black/60 backdrop-blur-xl border-b border-white/5 py-3" : "bg-transparent"
+			)}
+		>
+			<div className="mx-auto max-w-7xl flex items-center justify-between gap-4">
+				{/* Logo */}
+				<div className="flex-shrink-0">
+					{logo}
 				</div>
 
-				<AnimatePresence>
-					{activeDropdown && (
-						<NavbarMenu activeMenu={activeDropdown} sections={sections} />
+				{/* Desktop Nav */}
+				<nav className="hidden lg:flex items-center gap-1 bg-zinc-900/40 border border-white/5 rounded-full p-1 backdrop-blur-md">
+					{items.map((item) =>
+						item.type === "link" ? (
+							<a
+								key={item.href}
+								href={item.href}
+								className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-100 transition-colors rounded-full hover:bg-white/5"
+							>
+								{item.label}
+							</a>
+						) : (
+							<div
+								key={item.menu}
+								className="relative group"
+								onMouseEnter={() => setActiveDropdown(item.menu)}
+								onMouseLeave={() => setActiveDropdown(null)}
+							>
+								<button
+									className={cn(
+										"flex items-center gap-1.5 px-4 py-2 text-sm transition-all rounded-full",
+										activeDropdown === item.menu
+											? "text-zinc-100 bg-white/10"
+											: "text-zinc-400 hover:text-zinc-100 hover:bg-white/5"
+									)}
+								>
+									{item.label}
+									<ChevronDown size={14} className={cn("transition-transform duration-200", activeDropdown === item.menu && "rotate-180")} />
+								</button>
+
+								<AnimatePresence>
+									{activeDropdown === item.menu && (
+										<motion.div
+											initial={{ opacity: 0, y: 10, scale: 0.95 }}
+											animate={{ opacity: 1, y: 0, scale: 1 }}
+											exit={{ opacity: 0, y: 10, scale: 0.95 }}
+											className="absolute top-full left-1/2 -translate-x-1/2 pt-4 w-[450px]"
+										>
+											<div className="bg-zinc-950/90 border border-white/10 rounded-3xl p-4 backdrop-blur-2xl shadow-2xl">
+												<ul className="grid grid-cols-2 gap-2">
+													{sections.find(s => s.id === item.menu)?.links.map(link => (
+														<ListItem
+															key={link.href}
+															href={link.href}
+															title={link.label}
+															icon={link.icon}
+															external={link.external}
+														>
+															{link.description}
+														</ListItem>
+													))}
+												</ul>
+											</div>
+										</motion.div>
+									)}
+								</AnimatePresence>
+							</div>
+						)
 					)}
-				</AnimatePresence>
+				</nav>
+
+				{/* CTA (Desktop) */}
+				<div className="hidden lg:block">
+					{cta}
+				</div>
+
+				{/* Mobile Toggle */}
+				<div className="lg:hidden flex items-center gap-2">
+					<Sheet>
+						<SheetTrigger asChild>
+							<button className="p-2.5 bg-zinc-900 border border-white/10 rounded-xl text-zinc-400">
+								<Menu size={20} />
+							</button>
+						</SheetTrigger>
+						<SheetContent side="right" className="w-[85%] bg-black border-white/5 p-0">
+							<SheetHeader className="p-6 border-b border-white/5">
+								<SheetTitle className="text-left text-zinc-500 text-[10px] uppercase tracking-[0.2em]">Navigation Menu</SheetTitle>
+							</SheetHeader>
+							<div className="p-4 space-y-6 overflow-y-auto max-h-[calc(100vh-100px)]">
+								{items.map(item => (
+									<div key={item.label} className="space-y-4">
+										<p className="text-[10px] font-bold text-zinc-700 uppercase tracking-widest px-2">{item.label}</p>
+										<div className="space-y-1">
+											{item.type === "dropdown" ? (
+												sections.find(s => s.id === (item as any).menu)?.links.map(link => (
+													<a
+														key={link.href}
+														href={link.href}
+														className="flex items-center gap-3 p-3 rounded-2xl hover:bg-white/5 transition-colors group"
+													>
+														<div className="w-10 h-10 rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-500 group-hover:text-blue-500 transition-colors">
+															{link.icon}
+														</div>
+														<div className="flex-1">
+															<p className="text-sm font-semibold text-zinc-200">{link.label}</p>
+															<p className="text-[10px] text-zinc-500 line-clamp-1">{link.description}</p>
+														</div>
+													</a>
+												))
+											) : (
+												<a href={(item as any).href} className="flex items-center gap-3 p-3 rounded-2xl hover:bg-white/5 transition-colors">
+													<div className="w-10 h-10 rounded-xl bg-zinc-900 flex items-center justify-center text-zinc-500">
+														<ExternalLink size={18} />
+													</div>
+													<p className="text-sm font-semibold text-zinc-200">{item.label}</p>
+												</a>
+											)}
+										</div>
+									</div>
+								))}
+
+								<div className="pt-6 border-t border-white/5">
+									{cta}
+								</div>
+							</div>
+						</SheetContent>
+					</Sheet>
+				</div>
 			</div>
-		</div>
+		</header>
 	);
 }
