@@ -37,14 +37,11 @@ export async function GET() {
       ORDER BY host, time DESC
     `);
 
-    // 4. Get System info (uptime and load)
+    // 4. Get System info (uptime)
     const systemRes = await query(`
       SELECT DISTINCT ON (host) 
         host, 
         uptime, 
-        load1,
-        load5,
-        load15,
         time
       FROM system
       ORDER BY host, time DESC
@@ -84,11 +81,6 @@ export async function GET() {
         const days = Math.floor(uptimeSeconds / (24 * 3600));
         const hours = Math.floor((uptimeSeconds % (24 * 3600)) / 3600);
         hostsMap[r.host].uptime = `${days}d ${hours}h`;
-        hostsMap[r.host].load = {
-          l1: r.load1?.toFixed(2) || '0.00',
-          l5: r.load5?.toFixed(2) || '0.00',
-          l15: r.load15?.toFixed(2) || '0.00'
-        };
       }
     });
 
