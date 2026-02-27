@@ -83,6 +83,12 @@ interface PaginationData {
   limit: number;
 }
 
+interface DbDiagnostics {
+  totalConnections: number;
+  idleConnections: number;
+  waitingRequests: number;
+}
+
 export default function Dashboard() {
   const [pcs, setPcs] = useState<PCStats[]>([]);
   const [selectedPC, setSelectedPC] = useState<PCStats | null>(null);
@@ -98,6 +104,7 @@ export default function Dashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pagination, setPagination] = useState<PaginationData | null>(null);
   const [summary, setSummary] = useState<SummaryData | null>(null);
+  const [dbDiag, setDbDiag] = useState<DbDiagnostics | null>(null);
   const limit = 10;
 
   useEffect(() => {
@@ -128,14 +135,18 @@ export default function Dashboard() {
   const fetchData = async () => {
     try {
       const res = await fetch(`/api/stats?page=${currentPage}&limit=${limit}`);
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const result = await res.json();
-      if (result.error) throw new Error(result.error);
+
+      if (!res.ok) {
+        const errorMsg = result.details || result.error || `HTTP error! status: ${res.status}`;
+        throw new Error(errorMsg);
+      }
 
       const data = result.data;
       setPcs(data);
       setPagination(result.pagination);
       setSummary(result.summary);
+      setDbDiag(result.dbDiagnostics);
 
       if (data.length > 0) {
         if (!selectedPC) {
@@ -250,6 +261,24 @@ export default function Dashboard() {
               >
                 <RefreshCw className={`w-4 h-4 text-zinc-400 ${refreshing ? 'animate-spin' : ''}`} />
               </button>
+
+              {dbDiag && (
+                <div className="flex items-center gap-3 px-4 py-2 bg-zinc-900/40 border border-white/5 rounded-full text-[10px] text-zinc-500">
+                  <div className="flex items-center gap-1.5">
+                    <Database className="w-3 h-3 text-blue-500" />
+                    <span>DB Pool:</span>
+                    <span className="text-zinc-300 font-mono">
+                      {dbDiag.totalConnections - dbDiag.idleConnections}/10
+                    </span>
+                  </div>
+                  {dbDiag.waitingRequests > 0 && (
+                    <div className="flex items-center gap-1.5 text-orange-400 animate-pulse">
+                      <Zap className="w-3 h-3" />
+                      <span>{dbDiag.waitingRequests} Waiting</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -258,12 +287,33 @@ export default function Dashboard() {
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-red-500/5 border border-red-500/20 text-red-400 p-4 rounded-2xl flex items-center gap-3 backdrop-blur-md"
+            className="bg-red-500/10 border border-red-500/30 text-red-00 p-6 rounded-2xl flex flex-col gap-4 backdrop-blur-md"
           >
-            <AlertCircle className="w-5 h-5 flex-shrink-0" />
-            <div className="text-sm">
-              <p className="font-bold">Sync Error</p>
-              <p className="opacity-70 font-light text-xs">{error}</p>
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-6 h-6 text-red-500 flex-shrink-0" />
+              <div>
+                <h3 className="text-red-400 font-bold">Sync Error (HTTP 500)</h3>
+                <p className="text-red-300/80 text-sm mt-1">{error}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-red-500/10 text-[10px] items-center">
+              <div className="space-y-1">
+                <p className="text-red-400/50 uppercase tracking-widest font-bold">Possible Causes</p>
+                <ul className="list-disc list-inside text-red-300/60 font-light space-y-1">
+                  <li>Postgres query error (Check table/column existence)</li>
+                  <li>SSL/Certificate mismatch in Production network</li>
+                  <li>Database connection threshold reached (Max 10)</li>
+                </ul>
+              </div>
+              <div className="p-3 bg-red-950/20 rounded-xl border border-red-500/5">
+                <p className="text-red-400/50 uppercase tracking-widest font-bold mb-2">Technical Insight</p>
+                <code className="text-[9px] text-red-300/70 break-all bg-black/30 p-2 rounded block">
+                  {error.includes("column") ? "Potential Schema Mismatch" :
+                    error.includes("SSL") ? "Secure Connection Required" :
+                      error.includes("timeout") ? "Database Busy/Slow" : "Unhandled Internal Exception"}
+                </code>
+              </div>
             </div>
           </motion.div>
         )}

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, pool } from '@/lib/db';
 
 // Simple in-memory cache
 let cache: { data: any; timestamp: number } | null = null;
@@ -181,7 +181,14 @@ export async function GET(request: Request) {
       cache = { data: responseData, timestamp: Date.now() };
     }
 
-    return NextResponse.json(responseData);
+    return NextResponse.json({
+      ...responseData,
+      dbDiagnostics: {
+        totalConnections: (pool as any).totalCount,
+        idleConnections: (pool as any).idleCount,
+        waitingRequests: (pool as any).waitingCount
+      }
+    });
   } catch (error: any) {
     console.error('Database Error Details:', {
       message: error.message,
