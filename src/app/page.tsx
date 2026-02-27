@@ -195,15 +195,15 @@ export default function Dashboard() {
     {
       id: "monitoring",
       links: [
-        { label: "Real-time Stats", href: "#", description: "View live telemetry from all Telegraf agents", icon: <Activity className="w-5 h-5" /> },
-        { label: "Network View", href: "#", description: "Map of agent IP distributions", icon: <Network className="w-5 h-5" /> },
+        { label: "Real-time Stats", href: "/#realtime", description: "View live telemetry from all Telegraf agents", icon: <Activity className="w-5 h-5" /> },
+        { label: "Network View", href: "/#network", description: "Map of agent IP distributions", icon: <Network className="w-5 h-5" /> },
       ]
     },
     {
       id: "management",
       links: [
-        { label: "Agent Config", href: "#", description: "View and update telegraf.conf remotely", icon: <HardDrive className="w-5 h-5" /> },
-        { label: "Logs", href: "#", description: "System and error logs from agents", icon: <Database className="w-5 h-5" /> },
+        { label: "Agent Config", href: "/#config", description: "View and update telegraf.conf remotely", icon: <HardDrive className="w-5 h-5" /> },
+        { label: "Logs", href: "/#logs", description: "System and error logs from agents", icon: <Database className="w-5 h-5" /> },
       ]
     }
   ];
