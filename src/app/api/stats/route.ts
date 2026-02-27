@@ -183,7 +183,16 @@ export async function GET(request: Request) {
 
     return NextResponse.json(responseData);
   } catch (error: any) {
-    console.error('Database Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('Database Error Details:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      detail: error.detail
+    });
+    return NextResponse.json({
+      error: 'Database error occurred',
+      details: error.message,
+      code: error.code
+    }, { status: 500 });
   }
 }
