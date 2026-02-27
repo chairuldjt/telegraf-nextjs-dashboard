@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { query, pool } from '@/lib/db';
+import { Client } from 'pg';
 
 // Simple in-memory cache
 let cache: { data: any; timestamp: number } | null = null;
@@ -16,9 +16,17 @@ export async function GET(request: Request) {
     return NextResponse.json(cache.data);
   }
 
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: false,
+    connectionTimeoutMillis: 5000,
+  });
+
   try {
+    await client.connect();
+
     // Single consolidated query using CTEs and LATERAL JOINs for maximum efficiency
-    const resultQuery = await query(`
+    const resultQuery = await client.query(`
       WITH summary_data AS (
         SELECT 
           count(DISTINCT host) as total,
@@ -66,8 +74,8 @@ export async function GET(request: Request) {
 
     if (resultQuery.rows.length === 0) {
       // Fallback for empty results
-      const totalRes = await query(`SELECT count(DISTINCT host) FROM client_network`);
-      const total = parseInt(totalRes.rows[0].count || '0');
+      const totalRes = await client.query(`SELECT count(DISTINCT host) as total FROM client_network`);
+      const total = parseInt(totalRes.rows[0].total || '0');
       return NextResponse.json({
         data: [],
         summary: { total, online: 0, offline: total, avgCpu: 0, avgRam: 0 },
@@ -82,7 +90,7 @@ export async function GET(request: Request) {
     const avgCpuValue = Math.round(parseFloat(first.global_avg_cpu || '0'));
     const avgRamValue = Math.round(parseFloat(first.global_avg_ram || '0'));
 
-    const formattedData = resultQuery.rows.map(r => {
+    const formattedData = resultQuery.rows.map((r: any) => {
       const isOnline = (new Date().getTime() - new Date(r.last_seen).getTime()) < 300000;
       const uptimeSec = parseInt(r.uptime || '0');
 
@@ -133,14 +141,7 @@ export async function GET(request: Request) {
       cache = { data: responseData, timestamp: Date.now() };
     }
 
-    return NextResponse.json({
-      ...responseData,
-      dbDiagnostics: {
-        totalConnections: (pool as any).totalCount,
-        idleConnections: (pool as any).idleCount,
-        waitingRequests: (pool as any).waitingCount
-      }
-    });
+    return NextResponse.json(responseData);
 
   } catch (error: any) {
     console.error('Database Error Details:', {
@@ -154,5 +155,7 @@ export async function GET(request: Request) {
       details: error.message,
       code: error.code
     }, { status: 500 });
+  } finally {
+    await client.end().catch(console.error);
   }
 }
