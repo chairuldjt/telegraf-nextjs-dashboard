@@ -12,16 +12,18 @@ export async function GET(request: Request) {
     const summaryRes = await query(`
       SELECT 
         count(DISTINCT host) as total,
-        count(DISTINCT host) FILTER (WHERE time > now() - interval '5 minutes') as online,
+        count(DISTINCT CASE WHEN time > now() - interval '5 minutes' THEN host END) as online,
         (SELECT AVG(100 - usage_idle) FROM cpu WHERE cpu = 'cpu-total' AND time > now() - interval '5 minutes') as avg_cpu,
         (SELECT AVG(used_percent) FROM mem WHERE time > now() - interval '5 minutes') as avg_ram
       FROM client_network
     `);
 
-    const totalHosts = parseInt(summaryRes.rows[0].total);
-    const onlineHosts = parseInt(summaryRes.rows[0].online);
-    const avgCpu = Math.round(parseFloat(summaryRes.rows[0].avg_cpu || '0'));
-    const avgRam = Math.round(parseFloat(summaryRes.rows[0].avg_ram || '0'));
+    const totalHosts = parseInt(summaryRes.rows[0].total || '0');
+    const onlineHosts = parseInt(summaryRes.rows[0].online || '0');
+    const rawAvgCpu = parseFloat(summaryRes.rows[0].avg_cpu);
+    const rawAvgRam = parseFloat(summaryRes.rows[0].avg_ram);
+    const avgCpu = isNaN(rawAvgCpu) ? 0 : Math.round(rawAvgCpu);
+    const avgRam = isNaN(rawAvgRam) ? 0 : Math.round(rawAvgRam);
     const offlineHosts = totalHosts - onlineHosts;
     const totalPages = Math.ceil(totalHosts / limit);
 
@@ -105,19 +107,26 @@ export async function GET(request: Request) {
 
     cpuRes.rows.forEach(r => {
       if (hostsMap[r.host]) {
+        const cpuUser = Math.round(parseFloat(r.usage_user));
+        const cpuSystem = Math.round(parseFloat(r.usage_system));
+        const cpuIowait = Math.round(parseFloat(r.usage_iowait));
+
         hostsMap[r.host].cpu = Math.round(r.cpu_active);
         hostsMap[r.host].cpuBreakdown = {
-          user: Math.round(r.usage_user),
-          system: Math.round(r.usage_system),
-          iowait: Math.round(r.usage_iowait)
+          user: isNaN(cpuUser) ? 0 : cpuUser,
+          system: isNaN(cpuSystem) ? 0 : cpuSystem,
+          iowait: isNaN(cpuIowait) ? 0 : cpuIowait
         };
       }
     });
 
     memRes.rows.forEach(r => {
       if (hostsMap[r.host]) {
-        hostsMap[r.host].ram = Math.round(r.used_percent);
-        hostsMap[r.host].ramAvailablePercent = Math.round(r.available_percent);
+        const ramUsedPercent = Math.round(parseFloat(r.used_percent));
+        const ramAvailablePercent = Math.round(parseFloat(r.available_percent));
+
+        hostsMap[r.host].ram = isNaN(ramUsedPercent) ? 0 : ramUsedPercent;
+        hostsMap[r.host].ramAvailablePercent = isNaN(ramAvailablePercent) ? 100 : ramAvailablePercent;
         hostsMap[r.host].ramTotal = r.total;
         hostsMap[r.host].ramUsed = r.used;
       }
@@ -125,14 +134,18 @@ export async function GET(request: Request) {
 
     systemRes.rows.forEach(r => {
       if (hostsMap[r.host]) {
-        const uptimeSeconds = parseInt(r.uptime);
+        const uptimeSeconds = parseInt(r.uptime || '0');
         const days = Math.floor(uptimeSeconds / (24 * 3600));
         const hours = Math.floor((uptimeSeconds % (24 * 3600)) / 3600);
         hostsMap[r.host].uptime = `${days}d ${hours}h`;
+
+        const l1 = parseFloat(r.load1);
+        const l5 = parseFloat(r.load5);
+        const l15 = parseFloat(r.load15);
         hostsMap[r.host].load = {
-          l1: parseFloat(r.load1).toFixed(2),
-          l5: parseFloat(r.load5).toFixed(2),
-          l15: parseFloat(r.load15).toFixed(2)
+          l1: isNaN(l1) ? '0.00' : l1.toFixed(2),
+          l5: isNaN(l5) ? '0.00' : l5.toFixed(2),
+          l15: isNaN(l15) ? '0.00' : l15.toFixed(2)
         };
       }
     });
