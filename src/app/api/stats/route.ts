@@ -11,166 +11,118 @@ export async function GET(request: Request) {
   const limit = parseInt(searchParams.get('limit') || '10');
   const offset = (page - 1) * limit;
 
-  // Check cache (only for page 1 with default limit for simplicity and maximum impact)
+  // Check cache
   if (page === 1 && limit === 10 && cache && (Date.now() - cache.timestamp) < CACHE_TTL) {
     return NextResponse.json(cache.data);
   }
 
   try {
-    // 1. Get Summary Stats (Total, Online, Offline)
-    const summaryRes = await query(`
+    // Single consolidated query using CTEs and LATERAL JOINs for maximum efficiency
+    const resultQuery = await query(`
+      WITH summary_data AS (
+        SELECT 
+          count(DISTINCT host) as total,
+          count(DISTINCT CASE WHEN time > now() - interval '5 minutes' THEN host END) as online,
+          (SELECT AVG(100 - usage_idle) FROM cpu WHERE cpu = 'cpu-total' AND time > now() - interval '5 minutes') as avg_cpu,
+          (SELECT AVG(used_percent) FROM mem WHERE time > now() - interval '5 minutes') as avg_ram
+        FROM client_network
+      ),
+      paged_hosts AS (
+        SELECT DISTINCT ON (host) 
+          host, "IP_Address" as ip, "MacAddress" as mac, time as last_seen
+        FROM client_network
+        ORDER BY host, time DESC
+        LIMIT $1 OFFSET $2
+      )
       SELECT 
-        count(DISTINCT host) as total,
-        count(DISTINCT CASE WHEN time > now() - interval '5 minutes' THEN host END) as online,
-        (SELECT AVG(100 - usage_idle) FROM cpu WHERE cpu = 'cpu-total' AND time > now() - interval '5 minutes') as avg_cpu,
-        (SELECT AVG(used_percent) FROM mem WHERE time > now() - interval '5 minutes') as avg_ram
-      FROM client_network
-    `);
-
-    const totalHosts = parseInt(summaryRes.rows[0].total || '0');
-    const onlineHosts = parseInt(summaryRes.rows[0].online || '0');
-    const rawAvgCpu = parseFloat(summaryRes.rows[0].avg_cpu);
-    const rawAvgRam = parseFloat(summaryRes.rows[0].avg_ram);
-    const avgCpu = isNaN(rawAvgCpu) ? 0 : Math.round(rawAvgCpu);
-    const avgRam = isNaN(rawAvgRam) ? 0 : Math.round(rawAvgRam);
-    const offlineHosts = totalHosts - onlineHosts;
-    const totalPages = Math.ceil(totalHosts / limit);
-
-    // 2. Get latest stats from client_network with pagination
-    const networkRes = await query(`
-      SELECT DISTINCT ON (host) 
-        host, 
-        "IP_Address" as ip, 
-        "MacAddress" as mac, 
-        time
-      FROM client_network
-      ORDER BY host, time DESC
-      LIMIT $1 OFFSET $2
+        h.*,
+        c.usage_user, c.usage_system, c.usage_iowait, (100 - c.usage_idle) as cpu_total,
+        m.used_percent, m.available_percent, m.total as ram_total, m.used as ram_used,
+        s.uptime, s.load1, s.load5, s.load15,
+        (SELECT total FROM summary_data) as global_total,
+        (SELECT online FROM summary_data) as global_online,
+        (SELECT avg_cpu FROM summary_data) as global_avg_cpu,
+        (SELECT avg_ram FROM summary_data) as global_avg_ram
+      FROM paged_hosts h
+      LEFT JOIN LATERAL (
+        SELECT usage_user, usage_system, usage_iowait, usage_idle 
+        FROM cpu 
+        WHERE host = h.host AND cpu = 'cpu-total' 
+        ORDER BY time DESC LIMIT 1
+      ) c ON true
+      LEFT JOIN LATERAL (
+        SELECT used_percent, available_percent, total, used 
+        FROM mem 
+        WHERE host = h.host 
+        ORDER BY time DESC LIMIT 1
+      ) m ON true
+      LEFT JOIN LATERAL (
+        SELECT uptime, load1, load5, load15 
+        FROM system 
+        WHERE host = h.host 
+        ORDER BY time DESC LIMIT 1
+      ) s ON true;
     `, [limit, offset]);
 
-    if (networkRes.rows.length === 0) {
+    if (resultQuery.rows.length === 0) {
+      // Fallback for empty results
+      const totalRes = await query(`SELECT count(DISTINCT host) FROM client_network`);
+      const total = parseInt(totalRes.rows[0].count || '0');
       return NextResponse.json({
         data: [],
-        summary: { total: totalHosts, online: onlineHosts, offline: offlineHosts },
-        pagination: { totalHosts, totalPages, currentPage: page }
+        summary: { total, online: 0, offline: total, avgCpu: 0, avgRam: 0 },
+        pagination: { totalHosts: total, totalPages: Math.ceil(total / limit), currentPage: page, limit }
       });
     }
 
-    const hostnames = networkRes.rows.map(r => r.host);
+    const first = resultQuery.rows[0];
+    const totalHosts = parseInt(first.global_total || '0');
+    const onlineHosts = parseInt(first.global_online || '0');
+    const offlineHosts = totalHosts - onlineHosts;
+    const avgCpuValue = Math.round(parseFloat(first.global_avg_cpu || '0'));
+    const avgRamValue = Math.round(parseFloat(first.global_avg_ram || '0'));
 
-    // 3. Get latest CPU usage and breakdown for these hosts
-    const cpuRes = await query(`
-      SELECT DISTINCT ON (host) 
-        host, 
-        (100 - usage_idle) as cpu_active, 
-        usage_user,
-        usage_system,
-        usage_iowait,
-        time
-      FROM cpu
-      WHERE cpu = 'cpu-total' AND host = ANY($1)
-      ORDER BY host, time DESC
-    `, [hostnames]);
+    const formattedData = resultQuery.rows.map(r => {
+      const isOnline = (new Date().getTime() - new Date(r.last_seen).getTime()) < 300000;
+      const uptimeSec = parseInt(r.uptime || '0');
 
-    // 4. Get latest Memory usage for these hosts
-    const memRes = await query(`
-      SELECT DISTINCT ON (host) 
-        host, 
-        used_percent, 
-        available_percent,
-        total,
-        used,
-        time
-      FROM mem
-      WHERE host = ANY($1)
-      ORDER BY host, time DESC
-    `, [hostnames]);
+      const cpuUser = Math.round(parseFloat(r.usage_user || '0'));
+      const cpuSystem = Math.round(parseFloat(r.usage_system || '0'));
+      const cpuIowait = Math.round(parseFloat(r.usage_iowait || '0'));
 
-    // 5. Get System info (uptime, load) for these hosts
-    const systemRes = await query(`
-      SELECT DISTINCT ON (host) 
-        host, 
-        uptime, 
-        load1,
-        load5,
-        load15,
-        time
-      FROM system
-      WHERE host = ANY($1)
-      ORDER BY host, time DESC
-    `, [hostnames]);
-
-    // Combine results
-    const hostsMap: Record<string, any> = {};
-
-    networkRes.rows.forEach(r => {
-      const isOnline = (new Date().getTime() - new Date(r.time).getTime()) < 300000;
-      hostsMap[r.host] = {
+      return {
         hostname: r.host,
         ip: r.ip,
         mac: r.mac,
         status: isOnline ? 'online' : 'offline',
-        lastUpdate: r.time
+        lastUpdate: r.last_seen,
+        cpu: Math.round(parseFloat(r.cpu_total || '0')),
+        cpuBreakdown: { user: cpuUser, system: cpuSystem, iowait: cpuIowait },
+        ram: Math.round(parseFloat(r.used_percent || '0')),
+        ramAvailablePercent: Math.round(parseFloat(r.available_percent || '0')),
+        ramTotal: r.ram_total,
+        ramUsed: r.ram_used,
+        uptime: `${Math.floor(uptimeSec / 86400)}d ${Math.floor((uptimeSec % 86400) / 3600)}h`,
+        load: {
+          l1: parseFloat(r.load1 || '0').toFixed(2),
+          l5: parseFloat(r.load5 || '0').toFixed(2),
+          l15: parseFloat(r.load15 || '0').toFixed(2)
+        }
       };
     });
 
-    cpuRes.rows.forEach(r => {
-      if (hostsMap[r.host]) {
-        const cpuUser = Math.round(parseFloat(r.usage_user));
-        const cpuSystem = Math.round(parseFloat(r.usage_system));
-        const cpuIowait = Math.round(parseFloat(r.usage_iowait));
-
-        hostsMap[r.host].cpu = Math.round(r.cpu_active);
-        hostsMap[r.host].cpuBreakdown = {
-          user: isNaN(cpuUser) ? 0 : cpuUser,
-          system: isNaN(cpuSystem) ? 0 : cpuSystem,
-          iowait: isNaN(cpuIowait) ? 0 : cpuIowait
-        };
-      }
-    });
-
-    memRes.rows.forEach(r => {
-      if (hostsMap[r.host]) {
-        const ramUsedPercent = Math.round(parseFloat(r.used_percent));
-        const ramAvailablePercent = Math.round(parseFloat(r.available_percent));
-
-        hostsMap[r.host].ram = isNaN(ramUsedPercent) ? 0 : ramUsedPercent;
-        hostsMap[r.host].ramAvailablePercent = isNaN(ramAvailablePercent) ? 100 : ramAvailablePercent;
-        hostsMap[r.host].ramTotal = r.total;
-        hostsMap[r.host].ramUsed = r.used;
-      }
-    });
-
-    systemRes.rows.forEach(r => {
-      if (hostsMap[r.host]) {
-        const uptimeSeconds = parseInt(r.uptime || '0');
-        const days = Math.floor(uptimeSeconds / (24 * 3600));
-        const hours = Math.floor((uptimeSeconds % (24 * 3600)) / 3600);
-        hostsMap[r.host].uptime = `${days}d ${hours}h`;
-
-        const l1 = parseFloat(r.load1);
-        const l5 = parseFloat(r.load5);
-        const l15 = parseFloat(r.load15);
-        hostsMap[r.host].load = {
-          l1: isNaN(l1) ? '0.00' : l1.toFixed(2),
-          l5: isNaN(l5) ? '0.00' : l5.toFixed(2),
-          l15: isNaN(l15) ? '0.00' : l15.toFixed(2)
-        };
-      }
-    });
-
     const responseData = {
-      data: Object.values(hostsMap),
+      data: formattedData,
       summary: {
         total: totalHosts,
         online: onlineHosts,
         offline: offlineHosts,
-        avgCpu,
-        avgRam
+        avgCpu: avgCpuValue,
+        avgRam: avgRamValue
       },
       pagination: {
         totalHosts,
-        totalPages,
+        totalPages: Math.ceil(totalHosts / limit),
         currentPage: page,
         limit
       }
@@ -189,6 +141,7 @@ export async function GET(request: Request) {
         waitingRequests: (pool as any).waitingCount
       }
     });
+
   } catch (error: any) {
     console.error('Database Error Details:', {
       message: error.message,

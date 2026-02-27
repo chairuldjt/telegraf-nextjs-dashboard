@@ -3,8 +3,8 @@ import { Pool } from 'pg';
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: false,
-  max: 5,
-  idleTimeoutMillis: 8000,
+  max: 1, // Strictly one connection to avoid slot exhaustion
+  idleTimeoutMillis: 5000,
   connectionTimeoutMillis: 5000,
 });
 
