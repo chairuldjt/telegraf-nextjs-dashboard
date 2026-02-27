@@ -1,11 +1,20 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
+// Simple in-memory cache
+let cache: { data: any; timestamp: number } | null = null;
+const CACHE_TTL = 15000; // 15 seconds
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const page = parseInt(searchParams.get('page') || '1');
   const limit = parseInt(searchParams.get('limit') || '10');
   const offset = (page - 1) * limit;
+
+  // Check cache (only for page 1 with default limit for simplicity and maximum impact)
+  if (page === 1 && limit === 10 && cache && (Date.now() - cache.timestamp) < CACHE_TTL) {
+    return NextResponse.json(cache.data);
+  }
 
   try {
     // 1. Get Summary Stats (Total, Online, Offline)
@@ -150,7 +159,7 @@ export async function GET(request: Request) {
       }
     });
 
-    return NextResponse.json({
+    const responseData = {
       data: Object.values(hostsMap),
       summary: {
         total: totalHosts,
@@ -165,7 +174,14 @@ export async function GET(request: Request) {
         currentPage: page,
         limit
       }
-    });
+    };
+
+    // Update cache
+    if (page === 1 && limit === 10) {
+      cache = { data: responseData, timestamp: Date.now() };
+    }
+
+    return NextResponse.json(responseData);
   } catch (error: any) {
     console.error('Database Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
