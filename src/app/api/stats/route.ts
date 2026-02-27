@@ -8,11 +8,21 @@ export async function GET(request: Request) {
   const offset = (page - 1) * limit;
 
   try {
-    // 1. Get total count of unique hosts
-    const countRes = await query(`
-      SELECT count(DISTINCT host) FROM client_network
+    // 1. Get Summary Stats (Total, Online, Offline)
+    const summaryRes = await query(`
+      SELECT 
+        count(DISTINCT host) as total,
+        count(DISTINCT host) FILTER (WHERE time > now() - interval '5 minutes') as online,
+        (SELECT AVG(100 - usage_idle) FROM cpu WHERE cpu = 'cpu-total' AND time > now() - interval '5 minutes') as avg_cpu,
+        (SELECT AVG(used_percent) FROM mem WHERE time > now() - interval '5 minutes') as avg_ram
+      FROM client_network
     `);
-    const totalHosts = parseInt(countRes.rows[0].count);
+
+    const totalHosts = parseInt(summaryRes.rows[0].total);
+    const onlineHosts = parseInt(summaryRes.rows[0].online);
+    const avgCpu = Math.round(parseFloat(summaryRes.rows[0].avg_cpu || '0'));
+    const avgRam = Math.round(parseFloat(summaryRes.rows[0].avg_ram || '0'));
+    const offlineHosts = totalHosts - onlineHosts;
     const totalPages = Math.ceil(totalHosts / limit);
 
     // 2. Get latest stats from client_network with pagination
@@ -30,17 +40,21 @@ export async function GET(request: Request) {
     if (networkRes.rows.length === 0) {
       return NextResponse.json({
         data: [],
+        summary: { total: totalHosts, online: onlineHosts, offline: offlineHosts },
         pagination: { totalHosts, totalPages, currentPage: page }
       });
     }
 
     const hostnames = networkRes.rows.map(r => r.host);
 
-    // 3. Get latest CPU usage for these hosts
+    // 3. Get latest CPU usage and breakdown for these hosts
     const cpuRes = await query(`
       SELECT DISTINCT ON (host) 
         host, 
         (100 - usage_idle) as cpu_active, 
+        usage_user,
+        usage_system,
+        usage_iowait,
         time
       FROM cpu
       WHERE cpu = 'cpu-total' AND host = ANY($1)
@@ -52,6 +66,7 @@ export async function GET(request: Request) {
       SELECT DISTINCT ON (host) 
         host, 
         used_percent, 
+        available_percent,
         total,
         used,
         time
@@ -60,11 +75,14 @@ export async function GET(request: Request) {
       ORDER BY host, time DESC
     `, [hostnames]);
 
-    // 5. Get System info (uptime) for these hosts
+    // 5. Get System info (uptime, load) for these hosts
     const systemRes = await query(`
       SELECT DISTINCT ON (host) 
         host, 
         uptime, 
+        load1,
+        load5,
+        load15,
         time
       FROM system
       WHERE host = ANY($1)
@@ -88,12 +106,18 @@ export async function GET(request: Request) {
     cpuRes.rows.forEach(r => {
       if (hostsMap[r.host]) {
         hostsMap[r.host].cpu = Math.round(r.cpu_active);
+        hostsMap[r.host].cpuBreakdown = {
+          user: Math.round(r.usage_user),
+          system: Math.round(r.usage_system),
+          iowait: Math.round(r.usage_iowait)
+        };
       }
     });
 
     memRes.rows.forEach(r => {
       if (hostsMap[r.host]) {
         hostsMap[r.host].ram = Math.round(r.used_percent);
+        hostsMap[r.host].ramAvailablePercent = Math.round(r.available_percent);
         hostsMap[r.host].ramTotal = r.total;
         hostsMap[r.host].ramUsed = r.used;
       }
@@ -105,11 +129,23 @@ export async function GET(request: Request) {
         const days = Math.floor(uptimeSeconds / (24 * 3600));
         const hours = Math.floor((uptimeSeconds % (24 * 3600)) / 3600);
         hostsMap[r.host].uptime = `${days}d ${hours}h`;
+        hostsMap[r.host].load = {
+          l1: parseFloat(r.load1).toFixed(2),
+          l5: parseFloat(r.load5).toFixed(2),
+          l15: parseFloat(r.load15).toFixed(2)
+        };
       }
     });
 
     return NextResponse.json({
       data: Object.values(hostsMap),
+      summary: {
+        total: totalHosts,
+        online: onlineHosts,
+        offline: offlineHosts,
+        avgCpu,
+        avgRam
+      },
       pagination: {
         totalHosts,
         totalPages,

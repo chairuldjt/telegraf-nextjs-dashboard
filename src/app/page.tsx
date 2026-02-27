@@ -50,9 +50,30 @@ interface PCStats {
   mac: string;
   status: 'online' | 'offline';
   cpu: number;
+  cpuBreakdown: {
+    user: number;
+    system: number;
+    iowait: number;
+  };
   ram: number;
+  ramAvailablePercent: number;
+  ramTotal?: number;
+  ramUsed?: number;
   uptime: string;
   lastUpdate: string;
+  load?: {
+    l1: string;
+    l5: string;
+    l15: string;
+  };
+}
+
+interface SummaryData {
+  total: number;
+  online: number;
+  offline: number;
+  avgCpu: number;
+  avgRam: number;
 }
 
 interface PaginationData {
@@ -76,6 +97,7 @@ export default function Dashboard() {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pagination, setPagination] = useState<PaginationData | null>(null);
+  const [summary, setSummary] = useState<SummaryData | null>(null);
   const limit = 10;
 
   useEffect(() => {
@@ -106,12 +128,14 @@ export default function Dashboard() {
   const fetchData = async () => {
     try {
       const res = await fetch(`/api/stats?page=${currentPage}&limit=${limit}`);
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const result = await res.json();
       if (result.error) throw new Error(result.error);
 
       const data = result.data;
       setPcs(data);
       setPagination(result.pagination);
+      setSummary(result.summary);
 
       if (data.length > 0) {
         if (!selectedPC) {
@@ -124,6 +148,8 @@ export default function Dashboard() {
       setError(null);
     } catch (err: any) {
       setError(err.message);
+      // Implement a slight delay before allowing retry to avoid spamming
+      setRefreshing(false);
     }
   };
 
@@ -143,6 +169,14 @@ export default function Dashboard() {
       pc.ip.includes(search)
     );
   }, [pcs, search]);
+
+  const dangerPcs = useMemo(() => {
+    return pcs.filter(pc => pc.cpu > 80 || pc.ram > 80);
+  }, [pcs]);
+
+  const topCpuPcs = useMemo(() => {
+    return [...pcs].sort((a, b) => b.cpu - a.cpu).slice(0, 10);
+  }, [pcs]);
 
   if (!isMounted) return null;
 
@@ -237,10 +271,10 @@ export default function Dashboard() {
         {/* Global Stats Grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           {[
-            { title: "Status", value: `${pcs.filter(p => p.status === 'online').length}/${pcs.length}`, desc: "Current Page", icon: <Monitor className="text-emerald-500 w-4 h-4" />, color: "emerald" },
-            { title: "CPU", value: `${avgCpu}%`, desc: "Avg Load", icon: <Cpu className="text-blue-500 w-4 h-4" />, color: "blue" },
-            { title: "RAM", value: `${avgRam}%`, desc: "Avg Usage", icon: <Activity className="text-purple-500 w-4 h-4" />, color: "purple" },
-            { title: "Total Nodes", value: pagination?.totalHosts || 0, desc: "Global Inventory", icon: <Server className="text-orange-500 w-4 h-4" />, color: "orange" },
+            { title: "Network Status", value: summary ? `${summary.online}/${summary.total}` : "0/0", desc: "Online Nodes", icon: <Network className="text-emerald-500 w-4 h-4" />, color: "emerald" },
+            { title: "System Load", value: selectedPC?.load?.l1 || "0.00", desc: "Current Load 1m", icon: <Activity className="text-blue-500 w-4 h-4" />, color: "blue" },
+            { title: "CPU Avg", value: summary ? `${summary.avgCpu}%` : `${avgCpu}%`, desc: "Total Active", icon: <Cpu className="text-purple-500 w-4 h-4" />, color: "purple" },
+            { title: "RAM Avg", value: summary ? `${summary.avgRam}%` : `${avgRam}%`, desc: "Total Usage", icon: <Database className="text-orange-500 w-4 h-4" />, color: "orange" },
           ].map((stat, i) => (
             <motion.div
               key={stat.title}
@@ -256,12 +290,82 @@ export default function Dashboard() {
                       {stat.icon}
                     </div>
                   </div>
-                  <div className="text-xl md:text-3xl font-bold tracking-tight">{loading ? <Skeleton className="h-8 md:h-9 w-12 md:w-20 bg-zinc-800" /> : stat.value}</div>
+                  <div className="text-xl md:text-2xl lg:text-3xl font-bold tracking-tight">{loading ? <Skeleton className="h-8 md:h-9 w-12 md:w-20 bg-zinc-800" /> : stat.value}</div>
                   <p className="text-[8px] md:text-[10px] text-zinc-600 uppercase tracking-tighter">{stat.desc}</p>
                 </div>
               </Card>
             </motion.div>
           ))}
+        </div>
+
+        {/* Priority Monitoring Sections */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Danger Zone */}
+          <AnimatePresence>
+            {dangerPcs.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <Card className="bg-red-500/5 border-red-500/20 backdrop-blur-md overflow-hidden rounded-2xl">
+                  <CardHeader className="py-3 px-4 flex flex-row items-center justify-between border-b border-red-500/10">
+                    <CardTitle className="text-red-400 text-xs font-bold flex items-center gap-2 uppercase tracking-tighter">
+                      <Zap className="w-3 h-3 animate-pulse" /> 🔥 DANGER ZONE (Usage &gt; 80%)
+                    </CardTitle>
+                    <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-[9px]">{dangerPcs.length}</Badge>
+                  </CardHeader>
+                  <CardContent className="p-3">
+                    <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                      {dangerPcs.map(pc => (
+                        <div
+                          key={pc.hostname}
+                          className="flex items-center justify-between p-2 rounded-lg bg-red-500/5 border border-red-500/10 text-[10px] cursor-pointer hover:bg-red-500/10 transition-colors"
+                          onClick={() => setSelectedPC(pc)}
+                        >
+                          <span className="font-bold text-red-200">{pc.hostname}</span>
+                          <div className="flex gap-3">
+                            <span className={pc.cpu > 80 ? 'text-red-400 font-bold' : 'text-zinc-500'}>CPU: {pc.cpu}%</span>
+                            <span className={pc.ram > 80 ? 'text-red-400 font-bold' : 'text-zinc-500'}>RAM: {pc.ram}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Top 10 CPU */}
+          <Card className="bg-zinc-900/40 border-white/5 backdrop-blur-md overflow-hidden rounded-2xl">
+            <CardHeader className="py-3 px-4 flex flex-row items-center justify-between border-b border-white/5">
+              <CardTitle className="text-zinc-400 text-xs font-bold flex items-center gap-2 uppercase tracking-tighter">
+                🏆 Top Consumers (CPU)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-3">
+              <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                {topCpuPcs.map((pc, idx) => (
+                  <div
+                    key={pc.hostname}
+                    className="flex items-center gap-3 p-1.5 rounded-lg hover:bg-white/[0.02] transition-colors cursor-pointer"
+                    onClick={() => setSelectedPC(pc)}
+                  >
+                    <span className="text-[9px] font-mono text-zinc-600 w-4">{idx + 1}.</span>
+                    <span className="text-[10px] text-zinc-300 flex-1 truncate">{pc.hostname}</span>
+                    <div className="flex items-center gap-2 w-24">
+                      <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500" style={{ width: `${pc.cpu}%` }} />
+                      </div>
+                      <span className="text-[9px] font-mono text-zinc-500">{pc.cpu}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 md:gap-8">
@@ -297,7 +401,7 @@ export default function Dashboard() {
                         {filteredPcs.map((pc) => (
                           <TableRow
                             key={pc.hostname}
-                            className={`hover:bg-white/[0.03] border-white/5 cursor-pointer transition-all group ${selectedPC?.hostname === pc.hostname ? "bg-white/[0.05]" : ""}`}
+                            className={`hover:bg-white/[0.03] border-white/5 cursor-pointer transition-all group ${selectedPC?.hostname === pc.hostname ? "bg-white/[0.05]" : ""} ${(pc.cpu > 80 || pc.ram > 80) ? "border-l-2 border-l-red-500/50" : ""}`}
                             onClick={() => setSelectedPC(pc)}
                           >
                             <TableCell className="font-semibold pl-4 md:pl-8 py-4 md:py-5">
@@ -459,6 +563,24 @@ export default function Dashboard() {
                         <div className="flex justify-between items-center">
                           <span className="text-zinc-400 uppercase font-light">Uptime</span>
                           <span className="text-zinc-200 font-medium">{selectedPC.uptime}</span>
+                        </div>
+                        <div className="flex justify-between items-center border-t border-white/5 pt-3">
+                          <span className="text-zinc-400 uppercase font-light">Load Avg</span>
+                          <span className="font-mono text-zinc-200">
+                            {selectedPC.load?.l1 || '0.00'} · {selectedPC.load?.l5 || '0.00'} · {selectedPC.load?.l15 || '0.00'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center border-t border-white/5 pt-3">
+                          <span className="text-zinc-400 uppercase font-light">CPU Breakdown</span>
+                          <span className="font-mono text-zinc-500 text-[9px] uppercase">
+                            U:{selectedPC.cpuBreakdown?.user}% S:{selectedPC.cpuBreakdown?.system}% I:{selectedPC.cpuBreakdown?.iowait}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center border-t border-white/5 pt-3">
+                          <span className="text-zinc-400 uppercase font-light">RAM Status</span>
+                          <span className="font-mono text-zinc-500 text-[9px] uppercase">
+                            Available: {selectedPC.ramAvailablePercent}% ({Math.round((selectedPC.ramTotal || 0) / 1024 / 1024 / 1024)}GB Total)
+                          </span>
                         </div>
                         <div className="flex justify-between items-center border-t border-white/5 pt-3">
                           <span className="text-zinc-400 uppercase font-light">Last Active</span>
